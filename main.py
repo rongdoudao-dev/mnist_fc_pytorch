@@ -228,12 +228,16 @@ def main():
     curves_path = os.path.join(cfg.SAVE_DIR, "training_curves.png")
     plot_training_curves(history, save_path=curves_path)
 
-    # 绘制预测结果（取前8张测试样本）
+    # 绘制预测结果（从每个数字0-9各取一张，共10张）
     sample_images, sample_labels, sample_preds, sample_probs = [], [], [], []
+    found_digits = set()
     model.eval()
     with torch.no_grad():
-        for i in range(min(8, len(test_dataset))):
+        for i in range(len(test_dataset)):
             img, label = test_dataset[i]
+            if label in found_digits:
+                continue
+            found_digits.add(label)
             logits = model(img.unsqueeze(0).to(cfg.DEVICE))
             # 手动 softmax 算概率
             logits_shifted = logits - logits.max(dim=1, keepdim=True).values
@@ -246,6 +250,9 @@ def main():
             sample_labels.append(label)
             sample_preds.append(pred)
             sample_probs.append(prob)
+
+            if len(found_digits) == 10:
+                break
 
     preds_path = os.path.join(cfg.SAVE_DIR, "predictions.png")
     plot_predictions(sample_images, sample_labels, sample_preds, sample_probs, save_path=preds_path)
