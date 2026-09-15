@@ -1,7 +1,9 @@
 """
-dataset.py - 自定义数据集处理
+dataset.py - 自定义数据集处理（含数据增强）
 继承 torch.utils.data.Dataset，实现 __len__ 和 __getitem__
 从文件夹加载手写数字图片，文件名格式 "数字_序号.png"
+
+数据增强：随机旋转、平移、缩放（比手动复制粘贴更高级，每次epoch随机生成）
 """
 import os
 import torch
@@ -16,30 +18,42 @@ class HandwrittenDigitsDataset(Dataset):
     文件名格式: "数字_序号.png"（如 "3_045.png"）
 
     用法:
-        dataset = HandwrittenDigitsDataset(root_dir="training_img")
+        # 训练集（带数据增强）
+        train_dataset = HandwrittenDigitsDataset(root_dir="training_img", augment=True)
+        # 测试集（不带数据增强）
+        test_dataset = HandwrittenDigitsDataset(root_dir="test_img", augment=False)
         image, label = dataset[0]  # image.shape=(1,32,32), label=数字
-        print(len(dataset))         # 样本总数
     """
 
-    def __init__(self, root_dir: str, image_size: int = 32, transform=None):
+    def __init__(self, root_dir: str, image_size: int = 32, augment: bool = False):
         """
         参数:
             root_dir: 图片文件夹路径
             image_size: 图片缩放尺寸，默认32×32
-            transform: 图片预处理变换，默认灰度化+Resize+ToTensor
+            augment: 是否启用数据增强（训练集=True，测试集=False）
         """
         self.root_dir = root_dir
         self.image_size = image_size
+        self.augment = augment
 
-        # 默认预处理：灰度化 → 缩放到32×32 → 转Tensor（值归一化到[0,1]）
-        if transform is None:
-            self.transform = transforms.Compose([
-                transforms.Grayscale(num_output_channels=1),
-                transforms.Resize((image_size, image_size)),
-                transforms.ToTensor(),
-            ])
-        else:
-            self.transform = transform
+        # 基础预处理：灰度化 → 缩放到32×32 → 转Tensor
+        base_transform = [
+            transforms.Grayscale(num_output_channels=1),
+            transforms.Resize((image_size, image_size)),
+        ]
+
+        # 数据增强（仅训练集）：随机旋转、平移、缩放
+        # 比手动复制粘贴更高级：每次epoch实时随机生成，无限多样性
+        if augment:
+            base_transform.append(transforms.RandomAffine(
+                degrees=15,          # 随机旋转 ±15度
+                translate=(0.1, 0.1), # 随机平移 ±10%
+                scale=(0.9, 1.1),     # 随机缩放 0.9~1.1
+                fill=0                # 填充黑色
+            ))
+
+        base_transform.append(transforms.ToTensor())
+        self.transform = transforms.Compose(base_transform)
 
         # 扫描所有图片文件
         self.image_paths = [
@@ -62,7 +76,7 @@ class HandwrittenDigitsDataset(Dataset):
         """
         path = self.image_paths[index]
         image = Image.open(path).convert("L")  # 转灰度
-        image = self.transform(image)           # 预处理 → Tensor
+        image = self.transform(image)           # 预处理（含数据增强）→ Tensor
         image = image.float()                   # 确保 fp32 精度
 
         # 从文件名提取标签："3_045.png" → 3
