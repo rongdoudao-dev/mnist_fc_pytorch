@@ -555,3 +555,121 @@ def plot_management_dashboard(history, confusion_matrix, save_path=None):
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"管理层6图仪表盘已保存: {save_path}")
     plt.close(fig)
+
+
+def compute_pr_curve(probabilities, labels, target_class, num_thresholds=200):
+    """
+    计算单个类别的P-R曲线（纯手写，不依赖sklearn）
+    参数:
+        probabilities: 预测概率，shape=(N, num_classes)
+        labels: 真实标签，shape=(N,)
+        target_class: 目标类别（把这个类当作正例）
+        num_thresholds: 阈值采样数量
+    返回:
+        precisions: 精确率列表
+        recalls: 召回率列表
+        bep: BEP平衡点（P=R时的取值）
+    """
+    # 提取目标类别的预测概率和真实二分类标签
+    scores = probabilities[:, target_class]
+    binary_labels = (labels == target_class).astype(int)
+    num_positive = binary_labels.sum()
+
+    if num_positive == 0:
+        return [0], [0], 0
+
+    # 按概率从高到低排序
+    sorted_indices = np.argsort(-scores)
+    sorted_scores = scores[sorted_indices]
+    sorted_labels = binary_labels[sorted_indices]
+
+    precisions = []
+    recalls = []
+
+    # 逐个阈值计算P和R
+    for i in range(1, len(sorted_labels) + 1):
+        tp = sorted_labels[:i].sum()
+        fp = i - tp
+        fn = num_positive - tp
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 1.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        precisions.append(precision)
+        recalls.append(recall)
+
+    # 计算BEP（P=R时的取值，找最接近的点）
+    bep = 0.0
+    min_diff = float("inf")
+    for p, r in zip(precisions, recalls):
+        diff = abs(p - r)
+        if diff < min_diff:
+            min_diff = diff
+            bep = (p + r) / 2
+
+    return precisions, recalls, bep
+
+
+def plot_pr_curve(probabilities, labels, num_classes=10, save_path=None):
+    """
+    绘制P-R曲线（Precision-Recall Curve）
+    包含：每个类别一条曲线 + macro平均曲线 + BEP标注
+    参数:
+        probabilities: 预测概率，shape=(N, num_classes)
+        labels: 真实标签，shape=(N,)
+        num_classes: 类别数
+        save_path: 保存路径
+    """
+    fig, ax = plt.subplots(1, 1, figsize=(12, 9))
+
+    # 颜色列表（10个类别）
+    colors = plt.cm.tab10(np.linspace(0, 1, num_classes))
+
+    all_precisions = []
+    all_recalls = []
+    bep_values = []
+
+    # 绘制每个类别的P-R曲线
+    for c in range(num_classes):
+        precisions, recalls, bep = compute_pr_curve(probabilities, labels, c)
+        all_precisions.append(precisions)
+        all_recalls.append(recalls)
+        bep_values.append(bep)
+        ax.plot(recalls, precisions, color=colors[c], linewidth=1.5, alpha=0.7,
+                label=f"数字{c} (BEP={bep:.3f})")
+        # 标注BEP点
+        ax.scatter([bep], [bep], color=colors[c], s=50, zorder=5, edgecolors="black", linewidths=0.5)
+
+    # 计算macro平均P-R曲线（对所有类别的P/R在相同recall点取平均）
+    # 简化版：用所有类别的BEP平均作为macro BEP
+    macro_bep = np.mean(bep_values)
+    ax.axhline(y=macro_bep, color="gray", linestyle="--", alpha=0.3)
+    ax.axvline(x=macro_bep, color="gray", linestyle="--", alpha=0.3)
+    ax.scatter([macro_bep], [macro_bep], color="red", s=150, marker="*", zorder=10,
+               edgecolors="black", linewidths=1, label=f"Macro平均 BEP={macro_bep:.3f}")
+
+    # 画P=R参考虚线
+    ax.plot([0, 1], [0, 1], color="gray", linestyle=":", alpha=0.5, label="P=R 参考线")
+
+    ax.set_title("P-R曲线 | Precision-Recall Curve\n（每个类别一条曲线 + BEP平衡点标注）",
+                 fontsize=14, fontweight="bold")
+    ax.set_xlabel("Recall 召回率（查全率）", fontsize=12)
+    ax.set_ylabel("Precision 精确率（查准率）", fontsize=12)
+    ax.set_xlim(0, 1.02)
+    ax.set_ylim(0, 1.02)
+    ax.legend(loc="lower left", fontsize=9, ncol=2)
+    ax.grid(True, alpha=0.3)
+
+    # 在右上角添加说明
+    ax.text(0.98, 0.98,
+            f"测试集: {len(labels)} 张\n"
+            f"Macro BEP: {macro_bep:.3f}\n"
+            f"曲线越靠右上角越好\n"
+            f"BEP=P=R时的取值",
+            transform=ax.transAxes, fontsize=10,
+            verticalalignment="top", horizontalalignment="right",
+            bbox=dict(boxstyle="round", facecolor="lightyellow", alpha=0.8))
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"P-R曲线已保存: {save_path}")
+    plt.close(fig)
