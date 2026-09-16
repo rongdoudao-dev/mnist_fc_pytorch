@@ -9,6 +9,7 @@ from .utils import (
     compute_confusion_matrix, plot_confusion_matrix,
     plot_per_class_recall, plot_confusion_and_recall,
     plot_gradient_monitoring, plot_learning_rate, plot_full_dashboard,
+    plot_management_dashboard,
 )
 
 __all__ = [
@@ -17,4 +18,5 @@ __all__ = [
     "compute_confusion_matrix", "plot_confusion_matrix",
     "plot_per_class_recall", "plot_confusion_and_recall",
     "plot_gradient_monitoring", "plot_learning_rate", "plot_full_dashboard",
+    "plot_management_dashboard",
 ]

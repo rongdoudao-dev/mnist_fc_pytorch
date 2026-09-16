@@ -24,12 +24,13 @@ from torch.utils.data import DataLoader, random_split
 from model import FullyConnectedNetwork
 from loss import CustomCrossEntropyLoss
 from data import HandwrittenDigitsDataset
-from metrics import classification_report, compute_accuracy
+from metrics import classification_report, compute_accuracy, compute_precision, compute_recall, compute_f1
 from utils import (
     set_seed, Timer, AverageMeter,
     plot_training_curves, plot_predictions,
     compute_confusion_matrix, plot_confusion_and_recall,
     plot_gradient_monitoring, plot_learning_rate, plot_full_dashboard,
+    plot_management_dashboard,
 )
 
 
@@ -86,11 +87,13 @@ def compute_gradient_norms(model):
 
 
 def train_one_epoch(model, train_loader, criterion, optimizer, device, grad_history, batch_loss_history):
-    """训练一个epoch，同时记录梯度和batch损失"""
+    """训练一个epoch，同时记录梯度、batch损失、所有预测和标签"""
     model.train()
     loss_meter = AverageMeter("Loss")
     correct = 0
     total = 0
+    all_predictions = []
+    all_labels = []
     epoch_layer_l2 = []
     epoch_layer_rms = []
     epoch_global_before = []
@@ -127,6 +130,8 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, grad_hist
         predictions = torch.argmax(logits, dim=1)
         correct += (predictions == batch_labels).sum().item()
         total += batch_labels.size(0)
+        all_predictions.extend(predictions.cpu().numpy())
+        all_labels.extend(batch_labels.cpu().numpy())
 
     # 记录本epoch的平均梯度
     if epoch_layer_l2:
@@ -141,7 +146,7 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, grad_hist
     grad_history["global_norm_before"].append(np.mean(epoch_global_before))
     grad_history["global_norm_after"].append(np.mean(epoch_global_after))
 
-    return loss_meter.avg, correct / total
+    return loss_meter.avg, correct / total, np.array(all_predictions), np.array(all_labels)
 
 
 def evaluate(model, data_loader, criterion, device):
@@ -215,7 +220,11 @@ def main():
 
     # ===== 3. 训练（含早停、学习率衰减、梯度监控）=====
     print("\n[3/6] 开始训练...")
-    history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": [], "test_loss": [], "test_acc": []}
+    history = {
+        "train_loss": [], "train_acc": [], "val_loss": [], "val_acc": [], "test_loss": [], "test_acc": [],
+        "train_precision": [], "train_recall": [], "train_f1": [],
+        "val_precision": [], "val_recall": [], "val_f1": [],
+    }
     grad_history = {"layer_names": ["隐藏层1-W", "隐藏层1-b", "隐藏层2-W", "隐藏层2-b", "隐藏层3-W", "隐藏层3-b", "输出层-W", "输出层-b"],
                     "global_norm_before": [], "global_norm_after": []}
     batch_loss_history = []
@@ -233,13 +242,21 @@ def main():
         current_lr = optimizer.param_groups[0]["lr"]
         lr_history.append(current_lr)
 
-        train_loss, train_acc = train_one_epoch(
+        train_loss, train_acc, train_preds_epoch, train_labels_epoch = train_one_epoch(
             model, train_loader, criterion, optimizer, cfg.DEVICE, grad_history, batch_loss_history
         )
-        val_loss, val_acc, _, _ = evaluate(model, val_loader, criterion, cfg.DEVICE)
+        val_loss, val_acc, val_preds_epoch, val_labels_epoch = evaluate(model, val_loader, criterion, cfg.DEVICE)
         test_loss, test_acc, _, _ = evaluate(model, test_loader, criterion, cfg.DEVICE)
 
         scheduler.step()  # 学习率衰减
+
+        # 计算训练集和验证集的P/R/F1（管理层必看指标）
+        train_p = compute_precision(train_preds_epoch, train_labels_epoch, cfg.NUM_CLASSES)
+        train_r = compute_recall(train_preds_epoch, train_labels_epoch, cfg.NUM_CLASSES)
+        train_f1 = compute_f1(train_preds_epoch, train_labels_epoch, cfg.NUM_CLASSES)
+        val_p = compute_precision(val_preds_epoch, val_labels_epoch, cfg.NUM_CLASSES)
+        val_r = compute_recall(val_preds_epoch, val_labels_epoch, cfg.NUM_CLASSES)
+        val_f1 = compute_f1(val_preds_epoch, val_labels_epoch, cfg.NUM_CLASSES)
 
         # 记录历史
         history["train_loss"].append(train_loss)
@@ -248,6 +265,12 @@ def main():
         history["val_acc"].append(val_acc)
         history["test_loss"].append(test_loss)
         history["test_acc"].append(test_acc)
+        history["train_precision"].append(train_p)
+        history["train_recall"].append(train_r)
+        history["train_f1"].append(train_f1)
+        history["val_precision"].append(val_p)
+        history["val_recall"].append(val_r)
+        history["val_f1"].append(val_f1)
 
         # 早停 + 保存最佳模型
         if val_loss < best_val_loss:
@@ -260,8 +283,8 @@ def main():
 
         if epoch == 1 or epoch % cfg.PRINT_EVERY == 0 or epoch == cfg.EPOCHS:
             print(f"  Epoch [{epoch:3d}/{cfg.EPOCHS}] lr={current_lr:.5f} "
-                  f"| 训练 Loss:{train_loss:.4f} Acc:{train_acc:.2%} "
-                  f"| 验证 Loss:{val_loss:.4f} Acc:{val_acc:.2%} "
+                  f"| 训练 Loss:{train_loss:.4f} Acc:{train_acc:.2%} P:{train_p:.2%} R:{train_r:.2%} F1:{train_f1:.2%} "
+                  f"| 验证 Loss:{val_loss:.4f} Acc:{val_acc:.2%} P:{val_p:.2%} R:{val_r:.2%} F1:{val_f1:.2%} "
                   f"| 测试 Acc:{test_acc:.2%}")
 
         if patience_counter >= cfg.EARLY_STOP_PATIENCE:
@@ -325,6 +348,10 @@ def main():
     plot_confusion_and_recall(cm_val, "验证集", save_path=os.path.join(cfg.SAVE_DIR, "confusion_val.png"))
     plot_confusion_and_recall(cm_test, "测试集", save_path=os.path.join(cfg.SAVE_DIR, "confusion_test.png"))
 
+    # 6.3.1 管理层汇报6图仪表盘（行业标准：泛化/P变化/R变化/Loss/F1/混淆矩阵+P/R）
+    plot_management_dashboard(history, cm_test,
+                              save_path=os.path.join(cfg.SAVE_DIR, "management_dashboard.png"))
+
     # 6.4 梯度监控图
     plot_gradient_monitoring(grad_history, save_path=os.path.join(cfg.SAVE_DIR, "gradient_monitoring.png"))
 
@@ -360,9 +387,9 @@ def main():
     print("训练完成！（全面优化升级版）")
     print(f"  最佳epoch: {best_epoch} | 测试准确率: {test_acc:.2%}")
     print(f"  生成的图像:")
-    for f in ["training_curves.png", "training_dashboard.png", "confusion_train.png",
-              "confusion_val.png", "confusion_test.png", "gradient_monitoring.png",
-              "learning_rate.png", "predictions.png"]:
+    for f in ["training_curves.png", "training_dashboard.png", "management_dashboard.png",
+              "confusion_train.png", "confusion_val.png", "confusion_test.png",
+              "gradient_monitoring.png", "learning_rate.png", "predictions.png"]:
         print(f"    - runs/{f}")
     print("=" * 70)
 

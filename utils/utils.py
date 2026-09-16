@@ -409,3 +409,149 @@ def plot_full_dashboard(history: dict, grad_history: dict, lr_history: list,
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"综合训练仪表盘已保存: {save_path}")
     plt.close(fig)
+
+
+def plot_management_dashboard(history, confusion_matrix, save_path=None):
+    """
+    管理层必看6图综合仪表盘（行业标准汇报格式）
+    6张子图：
+      ① 泛化（训练/验证准确率曲线）- 看过拟合/欠拟合
+      ② P变化（精确率Precision曲线）- 看预测为正的里面对了多少
+      ③ R变化（召回率Recall曲线）- 看真实为正的里面找回来多少
+      ④ Loss变化（损失函数曲线）- 看收敛情况
+      ⑤ F1变化（F1分数曲线）- 看P和R的综合平衡
+      ⑥ 混淆矩阵+每类P/R - 看具体哪些类别容易混淆
+
+    参数:
+        history: 字典，包含 train_loss, train_acc, val_loss, val_acc,
+                 train_precision, train_recall, train_f1,
+                 val_precision, val_recall, val_f1
+        confusion_matrix: 测试集混淆矩阵，shape=(10,10)
+        save_path: 保存路径
+    """
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle("管理层汇报仪表盘 | 模型训练全维度监控", fontsize=14, fontweight="bold", y=0.98)
+
+    colors = {"train": "#e74c3c", "val": "#f39c12"}
+
+    # ===== ① 泛化（准确率曲线）=====
+    axes[0, 0].plot(history["train_acc"], label="训练集", color=colors["train"], linewidth=2)
+    if "val_acc" in history:
+        axes[0, 0].plot(history["val_acc"], label="验证集", color=colors["val"], linewidth=2)
+    axes[0, 0].set_title("① 泛化能力 | 准确率曲线", fontsize=12, fontweight="bold")
+    axes[0, 0].set_xlabel("Epoch")
+    axes[0, 0].set_ylabel("Accuracy")
+    axes[0, 0].set_ylim(0, 1.05)
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
+    # 标注最终值
+    if "val_acc" in history and len(history["val_acc"]) > 0:
+        axes[0, 0].annotate(f"最终验证: {history['val_acc'][-1]:.2%}",
+                             xy=(len(history["val_acc"])-1, history["val_acc"][-1]),
+                             xytext=(-80, 20), textcoords="offset points",
+                             fontsize=9, color=colors["val"],
+                             arrowprops=dict(arrowstyle="->", color=colors["val"]))
+
+    # ===== ② P变化（精确率曲线）=====
+    if "train_precision" in history:
+        axes[0, 1].plot(history["train_precision"], label="训练集", color=colors["train"], linewidth=2)
+    if "val_precision" in history:
+        axes[0, 1].plot(history["val_precision"], label="验证集", color=colors["val"], linewidth=2)
+    axes[0, 1].set_title("② 精确率 Precision | P变化", fontsize=12, fontweight="bold")
+    axes[0, 1].set_xlabel("Epoch")
+    axes[0, 1].set_ylabel("Precision (查准率)")
+    axes[0, 1].set_ylim(0, 1.05)
+    axes[0, 1].legend()
+    axes[0, 1].grid(True, alpha=0.3)
+    axes[0, 1].text(0.02, 0.02, "P=TP/(TP+FP)\n预测为正里对了多少",
+                     transform=axes[0, 1].transAxes, fontsize=8,
+                     verticalalignment="bottom", bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5))
+
+    # ===== ③ R变化（召回率曲线）=====
+    if "train_recall" in history:
+        axes[0, 2].plot(history["train_recall"], label="训练集", color=colors["train"], linewidth=2)
+    if "val_recall" in history:
+        axes[0, 2].plot(history["val_recall"], label="验证集", color=colors["val"], linewidth=2)
+    axes[0, 2].set_title("③ 召回率 Recall | R变化", fontsize=12, fontweight="bold")
+    axes[0, 2].set_xlabel("Epoch")
+    axes[0, 2].set_ylabel("Recall (查全率)")
+    axes[0, 2].set_ylim(0, 1.05)
+    axes[0, 2].legend()
+    axes[0, 2].grid(True, alpha=0.3)
+    axes[0, 2].text(0.02, 0.02, "R=TP/(TP+FN)\n真实为正里找回多少",
+                     transform=axes[0, 2].transAxes, fontsize=8,
+                     verticalalignment="bottom", bbox=dict(boxstyle="round", facecolor="lightblue", alpha=0.5))
+
+    # ===== ④ Loss变化（损失曲线）=====
+    axes[1, 0].plot(history["train_loss"], label="训练集", color=colors["train"], linewidth=2)
+    if "val_loss" in history:
+        axes[1, 0].plot(history["val_loss"], label="验证集", color=colors["val"], linewidth=2)
+    axes[1, 0].set_title("④ 损失函数 | Loss变化", fontsize=12, fontweight="bold")
+    axes[1, 0].set_xlabel("Epoch")
+    axes[1, 0].set_ylabel("Cross Entropy Loss")
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+    # 标注收敛点
+    if "val_loss" in history and len(history["val_loss"]) > 0:
+        min_epoch = np.argmin(history["val_loss"])
+        axes[1, 0].axvline(x=min_epoch, color="green", linestyle="--", alpha=0.5)
+        axes[1, 0].annotate(f"最优: Epoch {min_epoch+1}",
+                             xy=(min_epoch, history["val_loss"][min_epoch]),
+                             xytext=(20, 20), textcoords="offset points",
+                             fontsize=9, color="green",
+                             arrowprops=dict(arrowstyle="->", color="green"))
+
+    # ===== ⑤ F1变化（F1分数曲线）=====
+    if "train_f1" in history:
+        axes[1, 1].plot(history["train_f1"], label="训练集", color=colors["train"], linewidth=2)
+    if "val_f1" in history:
+        axes[1, 1].plot(history["val_f1"], label="验证集", color=colors["val"], linewidth=2)
+    axes[1, 1].set_title("⑤ F1分数 | 综合评价", fontsize=12, fontweight="bold")
+    axes[1, 1].set_xlabel("Epoch")
+    axes[1, 1].set_ylabel("F1 Score")
+    axes[1, 1].set_ylim(0, 1.05)
+    axes[1, 1].legend()
+    axes[1, 1].grid(True, alpha=0.3)
+    axes[1, 1].text(0.02, 0.02, "F1=2PR/(P+R)\nP和R的调和平均",
+                     transform=axes[1, 1].transAxes, fontsize=8,
+                     verticalalignment="bottom", bbox=dict(boxstyle="round", facecolor="lightgreen", alpha=0.5))
+
+    # ===== ⑥ 混淆矩阵+每类P/R =====
+    num_classes = confusion_matrix.shape[0]
+    # 计算每类P和R
+    per_class_p = []
+    per_class_r = []
+    for i in range(num_classes):
+        tp = confusion_matrix[i][i]
+        fp = confusion_matrix[:, i].sum() - tp
+        fn = confusion_matrix[i, :].sum() - tp
+        per_class_p.append(tp / (tp + fp) if (tp + fp) > 0 else 0)
+        per_class_r.append(tp / (tp + fn) if (tp + fn) > 0 else 0)
+
+    # 画混淆矩阵（左半部分）
+    ax_cm = axes[1, 2]
+    im = ax_cm.imshow(confusion_matrix, cmap=blue_cmap, aspect="auto")
+    ax_cm.set_title("⑥ 混淆矩阵 + 每类P/R", fontsize=12, fontweight="bold")
+    ax_cm.set_xlabel("预测类别 (Predicted)")
+    ax_cm.set_ylabel("真实类别 (True)")
+    ax_cm.set_xticks(range(num_classes))
+    ax_cm.set_yticks(range(num_classes))
+    # 在格子里标数字
+    for i in range(num_classes):
+        for j in range(num_classes):
+            if confusion_matrix[i][j] > 0:
+                color = "white" if confusion_matrix[i][j] > confusion_matrix.max() * 0.5 else "black"
+                ax_cm.text(j, i, str(confusion_matrix[i][j]),
+                           ha="center", va="center", color=color, fontsize=7)
+    # 在右侧标注每类P/R
+    for i in range(num_classes):
+        ax_cm.text(num_classes + 0.3, i, f"P:{per_class_p[i]:.2f}\nR:{per_class_r[i]:.2f}",
+                   va="center", fontsize=7, color="#333")
+    ax_cm.set_xlim(-0.5, num_classes + 2.5)
+    plt.colorbar(im, ax=ax_cm, fraction=0.046, pad=0.04)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"管理层6图仪表盘已保存: {save_path}")
+    plt.close(fig)
